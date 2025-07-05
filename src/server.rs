@@ -27,7 +27,13 @@ pub fn run() {
     let (server, transport) = new_server();
 
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                visible: false,
+                ..default()
+            }),
+            ..default()
+        }))
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
         .add_plugins(
             #[cfg(feature = "dev")]
@@ -201,10 +207,12 @@ fn receive_from_clients(
                     delta,
                 } => {
                     if let Some(entity) = player_map.0.get(&client_id) {
-                        last_input.0.insert(client_id, (frame, direction));
                         if let Ok((mut velocity, transform)) = transforms.get_mut(*entity) {
                             let dir = direction.clamp_length_max(1.0);
                             velocity.linvel += dir * MAX_ACCELERATION * delta;
+                            last_input
+                                .0
+                                .insert(client_id, (frame, direction, velocity.linvel));
 
                             // let correction = ServerMessage::PlayerCorrection {
                             //     client_id,
@@ -243,19 +251,26 @@ fn receive_from_clients(
 }
 
 fn broadcast_corrections(
-    player_map: Res<PlayerEntityMap>,
+    // player_map: Res<PlayerEntityMap>,
+    last_input: Res<LastInputFrame>,
     mut server: ResMut<RenetServer>,
     transforms: Query<(&Transform, &Velocity, &Player)>,
 ) {
     for (transform, velocity, player) in &transforms {
+        let Some((frame, _, linvel)) = last_input.0.get(&player.client_id) else {
+            continue;
+        };
+
         let correction = ServerMessage::PlayerCorrection {
             client_id: player.client_id,
-            frame: 0, // placeholder if frame isn't tracked (optional)
+            frame: *frame,
             linvel: velocity.linvel,
             angvel: velocity.angvel,
             position: transform.translation,
             rotation: transform.rotation,
         };
+
+        info!(position=?transform.translation, frame);
 
         let bytes =
             bincode::serde::encode_to_vec(&correction, bincode::config::standard()).unwrap();
@@ -295,4 +310,4 @@ pub struct Player {
 pub struct PlayerEntityMap(pub HashMap<u64, Entity>);
 
 #[derive(Resource, Default)]
-pub struct LastInputFrame(pub HashMap<u64, (u32, Vec2)>); // client_id -> (frame, direction)
+pub struct LastInputFrame(pub HashMap<u64, (u32, Vec2, Vec2)>); // client_id -> (frame, direction)

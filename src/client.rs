@@ -36,9 +36,11 @@ pub fn run() {
         .insert_resource(InputHistory::default())
         .configure_sets(Update, Connected.run_if(client_connected))
         .add_systems(Startup, setup_player)
+        .add_systems(Update, move_player)
+        .add_systems(Update, (receive_messages, check_collectibles))
         .add_systems(
-            Update,
-            (move_player, receive_messages, check_collectibles).in_set(Connected),
+            PostUpdate,
+            player_physics_simulation.in_set(PhysicsSet::Writeback),
         )
         .run();
 }
@@ -118,20 +120,30 @@ fn move_player(
 
     if let Ok(mut velocity) = query.single_mut() {
         velocity.linvel += predicted_step;
-
-        let frame = history.frame_counter;
-        history.history.push((frame, dir, velocity.linvel));
-        history.frame_counter += 1;
-
-        let msg = ClientMessage::MoveInput {
-            direction: dir,
-            frame,
-            delta,
-        };
-        let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-        client.send_message(0, bytes);
     }
+
+    let frame = history.frame_counter;
+    info!(frame);
+    history.frame_counter += 1;
+    let msg = ClientMessage::MoveInput {
+        direction: dir,
+        frame,
+        delta,
+    };
+    let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+    client.send_message(0, bytes);
     // }
+    // }
+}
+
+fn player_physics_simulation(
+    query: Query<&Transform, With<Player>>,
+    mut history: ResMut<InputHistory>,
+) {
+    if let Ok(transform) = query.single() {
+        let frame = history.frame_counter;
+        history.history.push((frame, *transform));
+    }
 }
 
 fn receive_messages(
@@ -139,7 +151,7 @@ fn receive_messages(
     mut client: ResMut<RenetClient>,
     mut client_info: ResMut<ClientInfo>,
     mut remote_players: Query<(Entity, &mut Transform, &RemotePlayer)>,
-    mut local_player: Query<(&mut Velocity, &mut Transform), (With<Player>, Without<RemotePlayer>)>,
+    mut local_player: Query<(&mut Transform), (With<Player>, Without<RemotePlayer>)>,
     collectible_query: Query<(Entity, &RemoteCollectibleId)>,
     mut history: ResMut<InputHistory>,
 ) {
@@ -170,34 +182,28 @@ fn receive_messages(
                     return; // Not ours
                 }
 
-                if let Ok((mut velocity, mut transform)) = local_player.get_single_mut() {
+                info!(?server_position, frame);
+
+                if let Ok((mut transform)) = local_player.single_mut() {
                     // First: correct position if it drifted
-                    if let Some((_, _, predicted_pos)) =
-                        history.history.iter().find(|(f, _, _)| *f == frame)
+                    if let Some((_, predicted_pos)) =
+                        history.history.iter().find(|(f, _)| *f == frame)
                     {
-                        let dist = transform.translation.distance(predicted_pos.extend(0.0));
+                        let dist = transform.translation.distance(predicted_pos.translation);
 
                         if dist > 0.1 {
                             transform.translation =
-                                transform.translation.lerp(predicted_pos.extend(0.0), 0.5);
+                                transform.translation.lerp(predicted_pos.translation, 0.5);
                         }
 
                         transform.rotation = server_rotation;
-                        history.history.retain(|(f, _, _)| *f > frame);
+                        history.history.retain(|(f, _)| *f > frame);
                     } else {
                         // No prediction available — just snap to server position (you'll need to include it)
-                        transform.translation = server_position; // ← make sure the server sends this
+                        transform.translation = server_position;
                         transform.rotation = server_rotation;
                         history.history.clear();
                     }
-
-                    // Then: correct velocity
-                    let linvel_delta = velocity.linvel.distance(server_linvel);
-                    if linvel_delta > 0.1 {
-                        velocity.linvel = velocity.linvel.lerp(server_linvel, 0.5);
-                    }
-
-                    velocity.angvel = server_angvel;
                 }
             }
 
@@ -301,5 +307,5 @@ pub struct ClientInfo {
 #[derive(Resource, Default)]
 struct InputHistory {
     frame_counter: u32,
-    history: Vec<(u32, Vec2, Vec2)>,
+    history: Vec<(u32, Transform)>,
 }
