@@ -27,7 +27,11 @@ pub enum ServerMessage {
     DespawnCollectible { id: u64 },
 
     /// Informs all clients of player movement
-    PlayerPosition { client_id: u64, position: Vec3 },
+    PlayerPosition {
+        client_id: u64,
+        position: Vec3,
+        rotation: Quat,
+    },
 
     /// Informs this client what their assigned client ID is
     AssignClientId { client_id: u64 },
@@ -35,7 +39,10 @@ pub enum ServerMessage {
     PlayerCorrection {
         client_id: u64,
         frame: u32,
+        linvel: Vec2,
+        angvel: f32,
         position: Vec3,
+        rotation: Quat,
     },
 }
 

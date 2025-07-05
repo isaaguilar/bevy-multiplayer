@@ -1,8 +1,15 @@
+#[cfg(feature = "dev")]
+use crate::dev_tools;
 use crate::{
-    BoxCollectable, ClientMessage, CollectibleInfo, PROTOCOL_ID, ServerChannel, ServerMessage,
-    connection_config,
+    BoxCollectable, ClientMessage, CollectibleInfo, MAX_ACCELERATION, PROTOCOL_ID, ServerChannel,
+    ServerMessage, connection_config,
 };
 use bevy::{color::palettes::css::YELLOW, platform::collections::HashMap, prelude::*};
+use bevy_rapier2d::{
+    plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin},
+    prelude::*,
+};
+
 use bevy_renet2::{
     netcode::{
         NetcodeServerPlugin, NetcodeServerTransport, ServerAuthentication, ServerSetupConfig,
@@ -21,12 +28,18 @@ pub fn run() {
 
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
+        .add_plugins(
+            #[cfg(feature = "dev")]
+            dev_tools::plugin,
+        )
         .add_plugins(NetcodeServerPlugin)
         .add_plugins(RenetServerPlugin)
         .insert_resource(server)
         .insert_resource(transport)
         .insert_resource(PlayerEntityMap::default())
         .insert_resource(CollectibleEntityMap::default())
+        .insert_resource(LastInputFrame::default())
         .add_systems(Startup, setup_world)
         .add_systems(
             Update,
@@ -36,6 +49,10 @@ pub fn run() {
                 broadcast_player_positions,
                 print_server_events,
             ),
+        )
+        .add_systems(
+            PostUpdate,
+            broadcast_corrections.in_set(PhysicsSet::Writeback),
         )
         .run();
 }
@@ -60,8 +77,16 @@ fn new_server() -> (RenetServer, NetcodeServerTransport) {
 }
 
 // === World Setup ===
-fn setup_world(mut commands: Commands, mut entity_map: ResMut<CollectibleEntityMap>) {
+fn setup_world(
+    mut commands: Commands,
+    mut config: Query<&mut RapierConfiguration>,
+    mut entity_map: ResMut<CollectibleEntityMap>,
+) {
     commands.spawn(Camera2d::default());
+
+    if let Ok(mut config) = config.single_mut() {
+        config.gravity.y = 0.0;
+    }
 
     for i in 1..4 {
         let id = i as u64;
@@ -93,36 +118,53 @@ fn handle_client_connects(
     mut commands: Commands,
 ) {
     for event in events.read() {
-        if let ServerEvent::ClientConnected { client_id } = event {
-            let entity = commands
-                .spawn((
-                    Player {
-                        client_id: *client_id,
-                    },
-                    Transform::from_xyz(0.0, 0.0, 0.0),
-                    GlobalTransform::default(),
-                ))
-                .id();
+        match event {
+            ServerEvent::ClientConnected { client_id } => {
+                let entity = commands
+                    .spawn((
+                        Player {
+                            client_id: *client_id,
+                        },
+                        RigidBody::Dynamic,
+                        Collider::cuboid(15.0, 15.0),
+                        Velocity::linear(Vec2::ZERO),
+                        Damping {
+                            linear_damping: 5.0,
+                            angular_damping: 2.0,
+                        },
+                        Transform::from_xyz(0.0, 0.0, 0.0),
+                        GlobalTransform::default(),
+                    ))
+                    .id();
 
-            player_map.0.insert(*client_id, entity);
+                player_map.0.insert(*client_id, entity);
 
-            let snapshot: Vec<CollectibleInfo> = boxes
-                .iter()
-                .map(|(id, t)| CollectibleInfo {
-                    id: id.0,
-                    position: t.translation,
-                })
-                .collect();
+                let snapshot: Vec<CollectibleInfo> = boxes
+                    .iter()
+                    .map(|(id, t)| CollectibleInfo {
+                        id: id.0,
+                        position: t.translation,
+                    })
+                    .collect();
 
-            let msg = ServerMessage::SpawnCollectibles(snapshot);
-            let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-            server.send_message(*client_id, ServerChannel::World, bytes);
+                let msg = ServerMessage::SpawnCollectibles(snapshot);
+                let bytes =
+                    bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+                server.send_message(*client_id, ServerChannel::World, bytes);
 
-            let msg = ServerMessage::AssignClientId {
-                client_id: *client_id,
-            };
-            let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-            server.send_message(*client_id, ServerChannel::World, bytes);
+                let msg = ServerMessage::AssignClientId {
+                    client_id: *client_id,
+                };
+                let bytes =
+                    bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+                server.send_message(*client_id, ServerChannel::World, bytes);
+            }
+            ServerEvent::ClientDisconnected { client_id, reason } => {
+                if let Some(entity) = player_map.0.remove(client_id) {
+                    commands.entity(entity).despawn();
+                    info!("Despawned disconnected player {client_id} ({reason:?})");
+                }
+            }
         }
     }
 }
@@ -140,7 +182,8 @@ fn receive_from_clients(
     mut server: ResMut<RenetServer>,
     player_map: Res<PlayerEntityMap>,
     mut collectible_entities: ResMut<CollectibleEntityMap>,
-    mut transforms: Query<&mut Transform, With<Player>>,
+    mut transforms: Query<(&mut Velocity, &Transform), With<Player>>,
+    mut last_input: ResMut<LastInputFrame>,
 ) {
     for client_id in server.clients_id() {
         while let Some(message) = server.receive_message(client_id, 0u8) {
@@ -158,22 +201,26 @@ fn receive_from_clients(
                     delta,
                 } => {
                     if let Some(entity) = player_map.0.get(&client_id) {
-                        if let Ok(mut transform) = transforms.get_mut(*entity) {
+                        last_input.0.insert(client_id, (frame, direction));
+                        if let Ok((mut velocity, transform)) = transforms.get_mut(*entity) {
                             let dir = direction.clamp_length_max(1.0);
-                            transform.translation += Vec3::new(dir.x, dir.y, 0.0) * 200.0 * delta;
+                            velocity.linvel += dir * MAX_ACCELERATION * delta;
 
-                            let correction = ServerMessage::PlayerCorrection {
-                                client_id,
-                                frame,
-                                position: transform.translation,
-                            };
+                            // let correction = ServerMessage::PlayerCorrection {
+                            //     client_id,
+                            //     frame,
+                            //     linvel: velocity.linvel,
+                            //     angvel: velocity.angvel,
+                            //     position: transform.translation,
+                            //     rotation: transform.rotation,
+                            // };
 
-                            let bytes = bincode::serde::encode_to_vec(
-                                &correction,
-                                bincode::config::standard(),
-                            )
-                            .unwrap();
-                            server.send_message(client_id, ServerChannel::World, bytes);
+                            // let bytes = bincode::serde::encode_to_vec(
+                            //     &correction,
+                            //     bincode::config::standard(),
+                            // )
+                            // .unwrap();
+                            // server.send_message(client_id, ServerChannel::World, bytes);
                         }
                     }
                 }
@@ -195,15 +242,36 @@ fn receive_from_clients(
     }
 }
 
-// === Broadcast Authoritative Player Positions and used to register ===
+fn broadcast_corrections(
+    player_map: Res<PlayerEntityMap>,
+    mut server: ResMut<RenetServer>,
+    transforms: Query<(&Transform, &Velocity, &Player)>,
+) {
+    for (transform, velocity, player) in &transforms {
+        let correction = ServerMessage::PlayerCorrection {
+            client_id: player.client_id,
+            frame: 0, // placeholder if frame isn't tracked (optional)
+            linvel: velocity.linvel,
+            angvel: velocity.angvel,
+            position: transform.translation,
+            rotation: transform.rotation,
+        };
+
+        let bytes =
+            bincode::serde::encode_to_vec(&correction, bincode::config::standard()).unwrap();
+        server.send_message(player.client_id, ServerChannel::World, bytes);
+    }
+}
+
 fn broadcast_player_positions(
-    players: Query<(&Transform, &Player)>,
+    players: Query<(&Player, &GlobalTransform)>,
     mut server: ResMut<RenetServer>,
 ) {
-    for (transform, player) in &players {
+    for (player, transform) in &players {
         let msg = ServerMessage::PlayerPosition {
             client_id: player.client_id,
-            position: transform.translation,
+            position: transform.translation(),
+            rotation: transform.rotation(),
         };
 
         let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
@@ -225,3 +293,6 @@ pub struct Player {
 
 #[derive(Resource, Default)]
 pub struct PlayerEntityMap(pub HashMap<u64, Entity>);
+
+#[derive(Resource, Default)]
+pub struct LastInputFrame(pub HashMap<u64, (u32, Vec2)>); // client_id -> (frame, direction)
