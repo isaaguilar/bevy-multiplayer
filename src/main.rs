@@ -1,11 +1,13 @@
 use std::time::Duration;
 
-use bevy::{ecs::component::Component, math::Vec3};
+use bevy::ecs::component::Component;
 use renet2::{ChannelConfig, ConnectionConfig, SendType};
-use serde::{Deserialize, Serialize};
 
 mod client;
+mod protocol;
 mod server;
+
+use protocol::*;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -17,9 +19,6 @@ fn main() {
         }
     }
 }
-
-/// This must match on both client and server
-pub const PROTOCOL_ID: u64 = 7;
 
 pub fn connection_config() -> ConnectionConfig {
     let channel = ChannelConfig {
@@ -34,21 +33,6 @@ pub fn connection_config() -> ConnectionConfig {
         available_bytes_per_tick: 1024 * 1024,
         client_channels_config: vec![channel.clone()],
         server_channels_config: vec![channel],
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub enum ServerMessage {
-    SpawnCollectibles(Vec<Vec3>),
-}
-
-pub enum ServerChannel {
-    Collectibles = 0,
-}
-
-impl From<ServerChannel> for u8 {
-    fn from(channel: ServerChannel) -> Self {
-        channel as u8
     }
 }
 
