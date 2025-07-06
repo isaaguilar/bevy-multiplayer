@@ -36,15 +36,6 @@ pub enum ServerMessage {
     AssignClientId {
         client_id: u64,
     },
-
-    PlayerCorrection {
-        client_id: u64,
-        frame: u32,
-        linvel: Vec2,
-        angvel: f32,
-        position: Vec3,
-        rotation: Quat,
-    },
 }
 
 /// Informs all clients of player movement

@@ -10,14 +10,12 @@ use bevy_rapier2d::{
     plugin::{NoUserData, PhysicsSet, RapierPhysicsPlugin},
     prelude::*,
 };
-
 use bevy_renet2::{
     netcode::{
         NetcodeServerPlugin, NetcodeServerTransport, ServerAuthentication, ServerSetupConfig,
     },
     prelude::{RenetServer, RenetServerPlugin, ServerEvent},
 };
-use core::time;
 use renet2_netcode::NativeSocket;
 use std::{
     net::UdpSocket,
@@ -47,7 +45,6 @@ pub fn run() {
         .insert_resource(transport)
         .insert_resource(PlayerEntityMap::default())
         .insert_resource(CollectibleEntityMap::default())
-        .insert_resource(LastInputFrame::default())
         .insert_resource(LastPlayerPosition::default())
         .add_systems(Startup, setup_world)
         .add_systems(
@@ -190,8 +187,7 @@ fn receive_from_clients(
     mut server: ResMut<RenetServer>,
     player_map: Res<PlayerEntityMap>,
     mut collectible_entities: ResMut<CollectibleEntityMap>,
-    mut transforms: Query<(&mut Velocity, &Transform), With<Player>>,
-    mut last_input: ResMut<LastInputFrame>,
+    mut transforms: Query<&mut Velocity, With<Player>>,
 ) {
     for client_id in server.clients_id() {
         while let Some(message) = server.receive_message(client_id, 0u8) {
@@ -205,22 +201,13 @@ fn receive_from_clients(
             match msg {
                 ClientMessage::MoveInput {
                     direction,
-                    frame,
+                    frame: _frame, //unused
                     delta,
                 } => {
                     if let Some(entity) = player_map.0.get(&client_id) {
-                        if let Ok((mut velocity, transform)) = transforms.get_mut(*entity) {
+                        if let Ok(mut velocity) = transforms.get_mut(*entity) {
                             let dir = direction.clamp_length_max(1.0);
                             velocity.linvel += dir * MAX_ACCELERATION * delta;
-                            last_input.0.insert(
-                                client_id,
-                                LastInputData {
-                                    frame,
-                                    direction,
-                                    linvel: velocity.linvel,
-                                    time: std::time::Instant::now(),
-                                },
-                            );
                         }
                     }
                 }
@@ -239,42 +226,6 @@ fn receive_from_clients(
                 }
             }
         }
-    }
-}
-
-fn broadcast_corrections(
-    // player_map: Res<PlayerEntityMap>,
-    last_input: Res<LastInputFrame>,
-    mut server: ResMut<RenetServer>,
-    transforms: Query<(&Transform, &Velocity, &Player)>,
-) {
-    return;
-    for (transform, velocity, player) in &transforms {
-        let Some(data) = last_input.0.get(&player.client_id) else {
-            continue;
-        };
-
-        // if std::time::Instant::now().duration_since(data.time)
-        //     < std::time::Duration::from_millis(33)
-        // {
-        //     continue;
-        // }
-
-        let correction = ServerMessage::PlayerCorrection {
-            client_id: player.client_id,
-            frame: data.frame,
-            linvel: velocity.linvel,
-            angvel: velocity.angvel,
-            position: transform.translation,
-            rotation: transform.rotation,
-        };
-
-        info!(position=?transform.translation, data.frame);
-
-        let bytes =
-            bincode::serde::encode_to_vec(&correction, bincode::config::standard()).unwrap();
-        // server.send_message(player.client_id, ServerChannel::World, bytes);
-        server.broadcast_message(ServerChannel::World, bytes);
     }
 }
 
@@ -318,27 +269,6 @@ pub struct Player {
 
 #[derive(Resource, Default)]
 pub struct PlayerEntityMap(pub HashMap<u64, Entity>);
-
-#[derive(Resource, Default)]
-pub struct LastInputFrame(pub HashMap<u64, LastInputData>); // client_id -> (frame, direction)
-
-pub struct LastInputData {
-    pub frame: u32,
-    pub direction: Vec2,
-    pub linvel: Vec2,
-    pub time: std::time::Instant,
-}
-
-impl Default for LastInputData {
-    fn default() -> Self {
-        Self {
-            frame: Default::default(),
-            direction: Default::default(),
-            linvel: Default::default(),
-            time: std::time::Instant::now(),
-        }
-    }
-}
 
 #[derive(Resource)]
 pub struct LastPlayerPosition {
