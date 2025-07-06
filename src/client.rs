@@ -178,18 +178,31 @@ fn receive_messages(
                 if Some(client_id) == client_info.id {
                     return;
                 }
-                commands.spawn((
-                    Transform::default(),
-                    Sprite {
-                        color: Color::srgb(0.8, 0.2, 1.0),
-                        custom_size: Some(Vec2::splat(30.0)),
-                        ..default()
-                    },
-                    Player,
-                    RemotePlayer {
-                        client_id: client_id,
-                    },
-                ));
+                let mut found = false;
+                for (_, _, remote_player) in players.iter() {
+                    match remote_player {
+                        Some(player) => {
+                            if player.client_id == client_id {
+                                found = true;
+                            }
+                        }
+                        None => {}
+                    }
+                }
+                if !found {
+                    commands.spawn((
+                        Transform::default(),
+                        Sprite {
+                            color: Color::srgb(0.8, 0.2, 1.0),
+                            custom_size: Some(Vec2::splat(30.0)),
+                            ..default()
+                        },
+                        Player,
+                        RemotePlayer {
+                            client_id: client_id,
+                        },
+                    ));
+                }
             }
 
             ServerMessage::DespawnPlayer { client_id } => {
