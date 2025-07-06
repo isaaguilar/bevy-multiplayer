@@ -108,7 +108,7 @@ fn receive_messages(
     mut commands: Commands,
     mut client: ResMut<RenetClient>,
     mut client_info: ResMut<ClientInfo>,
-    mut remote_players: Query<(Entity, &mut Transform, Option<&RemotePlayer>), With<Player>>,
+    mut players: Query<(Entity, &mut Transform, Option<&RemotePlayer>), With<Player>>,
     collectible_query: Query<(Entity, &RemoteCollectibleId)>,
 ) {
     while let Some(bytes) = client.receive_message(0) {
@@ -128,14 +128,11 @@ fn receive_messages(
 
             ServerMessage::PlayerPositions(player_positions) => {
                 for data in player_positions {
-                    let mut found = false;
-
-                    for (_ent, mut transform, remote) in remote_players.iter_mut() {
+                    for (_ent, mut transform, remote) in players.iter_mut() {
                         if Some(data.client_id) == client_info.id {
                             // This is us
                             transform.translation = data.position;
                             transform.rotation = data.rotation;
-                            found = true;
                             break;
                         }
 
@@ -144,26 +141,12 @@ fn receive_messages(
                                 if remote_player.client_id == data.client_id {
                                     transform.translation = data.position;
                                     transform.rotation = data.rotation;
-                                    found = true;
+
                                     break;
                                 }
                             }
                             None => {}
                         }
-                    }
-                    if !found {
-                        commands.spawn((
-                            Transform::from_translation(data.position),
-                            Sprite {
-                                color: Color::srgb(0.8, 0.2, 1.0),
-                                custom_size: Some(Vec2::splat(30.0)),
-                                ..default()
-                            },
-                            Player,
-                            RemotePlayer {
-                                client_id: data.client_id,
-                            },
-                        ));
                     }
                 }
             }
@@ -187,6 +170,34 @@ fn receive_messages(
                 for (entity, box_id) in collectible_query.iter() {
                     if box_id.0 == id {
                         commands.entity(entity).despawn();
+                    }
+                }
+            }
+
+            ServerMessage::SpawnRemotePlayer { client_id } => {
+                if Some(client_id) == client_info.id {
+                    return;
+                }
+                commands.spawn((
+                    Transform::default(),
+                    Sprite {
+                        color: Color::srgb(0.8, 0.2, 1.0),
+                        custom_size: Some(Vec2::splat(30.0)),
+                        ..default()
+                    },
+                    Player,
+                    RemotePlayer {
+                        client_id: client_id,
+                    },
+                ));
+            }
+
+            ServerMessage::DespawnPlayer { client_id } => {
+                for (entity, _, remote_player) in players.iter() {
+                    if let Some(player) = remote_player {
+                        if player.client_id == client_id {
+                            commands.entity(entity).despawn();
+                        }
                     }
                 }
             }

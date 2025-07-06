@@ -30,7 +30,16 @@ pub enum ServerMessage {
         id: u64,
     },
 
-    PlayerPositions(Vec<PlayerPosition>),
+    /// Informs all clients of player movements
+    PlayerPositions(Vec<PositionData>),
+
+    SpawnRemotePlayer {
+        client_id: u64,
+    },
+
+    DespawnPlayer {
+        client_id: u64,
+    },
 
     /// Informs this client what their assigned client ID is
     AssignClientId {
@@ -38,9 +47,8 @@ pub enum ServerMessage {
     },
 }
 
-/// Informs all clients of player movement
 #[derive(Serialize, Deserialize, Debug)]
-pub struct PlayerPosition {
+pub struct PositionData {
     pub client_id: u64,
     pub position: Vec3,
     pub rotation: Quat,

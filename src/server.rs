@@ -3,7 +3,7 @@ use crate::dev_tools;
 use crate::{
     BoxCollectable, ClientMessage, CollectibleInfo, MAX_ACCELERATION, PROTOCOL_ID, ServerChannel,
     ServerMessage, connection_config,
-    protocol::{PlayerPosition, SERVER_HOST},
+    protocol::{PositionData, SERVER_HOST},
 };
 use bevy::{color::palettes::css::YELLOW, platform::collections::HashMap, prelude::*};
 use bevy_rapier2d::{
@@ -118,6 +118,7 @@ fn setup_world(
 fn handle_client_connects(
     mut events: EventReader<ServerEvent>,
     boxes: Query<(&CollectibleId, &Transform), With<BoxCollectable>>,
+
     mut server: ResMut<RenetServer>,
     mut player_map: ResMut<PlayerEntityMap>,
     mut commands: Commands,
@@ -163,10 +164,28 @@ fn handle_client_connects(
                 let bytes =
                     bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
                 server.send_message(*client_id, ServerChannel::World, bytes);
+
+                for player_client_id in player_map.0.keys() {
+                    let msg = ServerMessage::SpawnRemotePlayer {
+                        client_id: *player_client_id,
+                    };
+                    let bytes =
+                        bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+
+                    server.broadcast_message(ServerChannel::World, bytes);
+                }
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 if let Some(entity) = player_map.0.remove(client_id) {
                     commands.entity(entity).despawn();
+
+                    let msg = ServerMessage::DespawnPlayer {
+                        client_id: *client_id,
+                    };
+                    let bytes =
+                        bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+
+                    server.broadcast_message(ServerChannel::World, bytes);
                     info!("Despawned disconnected player {client_id} ({reason:?})");
                 }
             }
@@ -241,7 +260,7 @@ fn broadcast_player_positions(
         last_player_position.time = std::time::Instant::now();
         let player_positions = players
             .iter()
-            .map(|(player, transform)| PlayerPosition {
+            .map(|(player, transform)| PositionData {
                 client_id: player.client_id,
                 position: transform.translation,
                 rotation: transform.rotation,
