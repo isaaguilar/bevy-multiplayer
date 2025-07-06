@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+pub const SERVER_HOST: &'static str = "0.0.0.0:5000";
+
 /// Unique protocol ID to identify your game
 pub const PROTOCOL_ID: u64 = 0x12345678;
 

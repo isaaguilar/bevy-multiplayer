@@ -2,7 +2,7 @@
 use crate::dev_tools;
 use crate::{
     BoxCollectable, ClientMessage, CollectibleInfo, MAX_ACCELERATION, PROTOCOL_ID, ServerChannel,
-    ServerMessage, connection_config,
+    ServerMessage, connection_config, protocol::SERVER_HOST,
 };
 use bevy::{color::palettes::css::YELLOW, platform::collections::HashMap, prelude::*};
 use bevy_rapier2d::{
@@ -16,6 +16,7 @@ use bevy_renet2::{
     },
     prelude::{RenetServer, RenetServerPlugin, ServerEvent},
 };
+use core::time;
 use renet2_netcode::NativeSocket;
 use std::{
     net::UdpSocket,
@@ -52,25 +53,24 @@ pub fn run() {
             (
                 handle_client_connects,
                 receive_from_clients,
-                broadcast_player_positions,
                 print_server_events,
             ),
         )
         .add_systems(
             PostUpdate,
-            broadcast_corrections.in_set(PhysicsSet::Writeback),
+            broadcast_player_positions.in_set(PhysicsSet::Writeback),
         )
         .run();
 }
 
 // === Server Initialization ===
 fn new_server() -> (RenetServer, NetcodeServerTransport) {
-    let socket = UdpSocket::bind("127.0.0.1:5000").unwrap();
+    let socket = UdpSocket::bind(SERVER_HOST).unwrap();
     let native_socket = NativeSocket::new(socket).unwrap();
 
     let setup_config = ServerSetupConfig {
         current_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap(),
-        socket_addresses: vec![vec!["127.0.0.1:5000".parse().unwrap()]],
+        socket_addresses: vec![vec![SERVER_HOST.parse().unwrap()]],
         authentication: ServerAuthentication::Unsecure,
         max_clients: 64,
         protocol_id: PROTOCOL_ID,
@@ -210,25 +210,15 @@ fn receive_from_clients(
                         if let Ok((mut velocity, transform)) = transforms.get_mut(*entity) {
                             let dir = direction.clamp_length_max(1.0);
                             velocity.linvel += dir * MAX_ACCELERATION * delta;
-                            last_input
-                                .0
-                                .insert(client_id, (frame, direction, velocity.linvel));
-
-                            // let correction = ServerMessage::PlayerCorrection {
-                            //     client_id,
-                            //     frame,
-                            //     linvel: velocity.linvel,
-                            //     angvel: velocity.angvel,
-                            //     position: transform.translation,
-                            //     rotation: transform.rotation,
-                            // };
-
-                            // let bytes = bincode::serde::encode_to_vec(
-                            //     &correction,
-                            //     bincode::config::standard(),
-                            // )
-                            // .unwrap();
-                            // server.send_message(client_id, ServerChannel::World, bytes);
+                            last_input.0.insert(
+                                client_id,
+                                LastInputData {
+                                    frame,
+                                    direction,
+                                    linvel: velocity.linvel,
+                                    time: std::time::Instant::now(),
+                                },
+                            );
                         }
                     }
                 }
@@ -256,38 +246,47 @@ fn broadcast_corrections(
     mut server: ResMut<RenetServer>,
     transforms: Query<(&Transform, &Velocity, &Player)>,
 ) {
+    return;
     for (transform, velocity, player) in &transforms {
-        let Some((frame, _, linvel)) = last_input.0.get(&player.client_id) else {
+        let Some(data) = last_input.0.get(&player.client_id) else {
             continue;
         };
 
+        // if std::time::Instant::now().duration_since(data.time)
+        //     < std::time::Duration::from_millis(33)
+        // {
+        //     continue;
+        // }
+
         let correction = ServerMessage::PlayerCorrection {
             client_id: player.client_id,
-            frame: *frame,
+            frame: data.frame,
             linvel: velocity.linvel,
             angvel: velocity.angvel,
             position: transform.translation,
             rotation: transform.rotation,
         };
 
-        info!(position=?transform.translation, frame);
+        info!(position=?transform.translation, data.frame);
 
         let bytes =
             bincode::serde::encode_to_vec(&correction, bincode::config::standard()).unwrap();
-        server.send_message(player.client_id, ServerChannel::World, bytes);
+        // server.send_message(player.client_id, ServerChannel::World, bytes);
+        server.broadcast_message(ServerChannel::World, bytes);
     }
 }
 
 fn broadcast_player_positions(
-    players: Query<(&Player, &GlobalTransform)>,
+    players: Query<(&Player, &Transform)>,
     mut server: ResMut<RenetServer>,
 ) {
     for (player, transform) in &players {
         let msg = ServerMessage::PlayerPosition {
             client_id: player.client_id,
-            position: transform.translation(),
-            rotation: transform.rotation(),
+            position: transform.translation,
+            rotation: transform.rotation,
         };
+        info!(position=?transform.translation);
 
         let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         server.broadcast_message(ServerChannel::World, bytes);
@@ -310,4 +309,22 @@ pub struct Player {
 pub struct PlayerEntityMap(pub HashMap<u64, Entity>);
 
 #[derive(Resource, Default)]
-pub struct LastInputFrame(pub HashMap<u64, (u32, Vec2, Vec2)>); // client_id -> (frame, direction)
+pub struct LastInputFrame(pub HashMap<u64, LastInputData>); // client_id -> (frame, direction)
+
+pub struct LastInputData {
+    pub frame: u32,
+    pub direction: Vec2,
+    pub linvel: Vec2,
+    pub time: std::time::Instant,
+}
+
+impl Default for LastInputData {
+    fn default() -> Self {
+        Self {
+            frame: Default::default(),
+            direction: Default::default(),
+            linvel: Default::default(),
+            time: std::time::Instant::now(),
+        }
+    }
+}

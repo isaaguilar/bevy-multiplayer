@@ -23,7 +23,7 @@ pub fn run() {
     let (client, transport) = new_client();
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
+        // .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
         .add_plugins(
             #[cfg(feature = "dev")]
             dev_tools::plugin,
@@ -38,10 +38,10 @@ pub fn run() {
         .add_systems(Startup, setup_player)
         .add_systems(Update, move_player)
         .add_systems(Update, (receive_messages, check_collectibles))
-        .add_systems(
-            PostUpdate,
-            player_physics_simulation.in_set(PhysicsSet::Writeback),
-        )
+        // .add_systems(
+        //     PostUpdate,
+        //     player_physics_simulation.in_set(PhysicsSet::Writeback),
+        // )
         .run();
 }
 
@@ -76,13 +76,13 @@ fn setup_player(mut commands: Commands, mut config: Query<&mut RapierConfigurati
 
     commands.spawn((
         Player,
-        RigidBody::Dynamic,
-        Collider::cuboid(15.0, 15.0),
-        Velocity::linear(Vec2::ZERO),
-        Damping {
-            linear_damping: 5.0,
-            angular_damping: 2.0,
-        },
+        // RigidBody::Dynamic,
+        // Collider::cuboid(15.0, 15.0),
+        // Velocity::linear(Vec2::ZERO),
+        // Damping {
+        //     linear_damping: 5.0,
+        //     angular_damping: 2.0,
+        // },
         Transform::from_xyz(0.0, 0.0, 0.0),
         Sprite {
             color: BLUE.into(),
@@ -94,7 +94,7 @@ fn setup_player(mut commands: Commands, mut config: Query<&mut RapierConfigurati
 
 fn move_player(
     keys: Res<ButtonInput<KeyCode>>,
-    mut query: Query<&mut Velocity, With<Player>>,
+    // mut query: Query<&mut Velocity, With<Player>>,
     time: Res<Time>,
     mut client: ResMut<RenetClient>,
     mut history: ResMut<InputHistory>,
@@ -113,27 +113,27 @@ fn move_player(
         direction.x += 1.0;
     }
 
-    // if direction != Vec2::ZERO {
-    let dir = direction.normalize_or_zero();
-    let delta = time.delta_secs();
-    let predicted_step = (dir * MAX_ACCELERATION * delta);
+    if direction != Vec2::ZERO {
+        let dir = direction.normalize_or_zero();
+        let delta = time.delta_secs();
+        // let predicted_step = (dir * MAX_ACCELERATION * delta);
 
-    if let Ok(mut velocity) = query.single_mut() {
-        velocity.linvel += predicted_step;
+        // if let Ok(mut velocity) = query.single_mut() {
+        //     velocity.linvel += predicted_step;
+        // }
+
+        let frame = history.frame_counter;
+        info!(frame);
+        history.frame_counter += 1;
+        let msg = ClientMessage::MoveInput {
+            direction: dir,
+            frame,
+            delta,
+        };
+        let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        client.send_message(0, bytes);
+        // }
     }
-
-    let frame = history.frame_counter;
-    info!(frame);
-    history.frame_counter += 1;
-    let msg = ClientMessage::MoveInput {
-        direction: dir,
-        frame,
-        delta,
-    };
-    let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    client.send_message(0, bytes);
-    // }
-    // }
 }
 
 fn player_physics_simulation(
@@ -150,8 +150,8 @@ fn receive_messages(
     mut commands: Commands,
     mut client: ResMut<RenetClient>,
     mut client_info: ResMut<ClientInfo>,
-    mut remote_players: Query<(Entity, &mut Transform, &RemotePlayer)>,
-    mut local_player: Query<(&mut Transform), (With<Player>, Without<RemotePlayer>)>,
+    mut remote_players: Query<(Entity, &mut Transform, Option<&RemotePlayer>), With<Player>>,
+    // mut local_player: Query<(&mut Transform), (With<Player>, Without<RemotePlayer>)>,
     collectible_query: Query<(Entity, &RemoteCollectibleId)>,
     mut history: ResMut<InputHistory>,
 ) {
@@ -178,33 +178,26 @@ fn receive_messages(
                 position: server_position,
                 rotation: server_rotation,
             } => {
+                return;
                 if Some(client_id) != client_info.id {
                     return; // Not ours
                 }
 
-                info!(?server_position, frame);
+                // info!(?server_position, frame);
 
-                if let Ok((mut transform)) = local_player.single_mut() {
-                    // First: correct position if it drifted
-                    if let Some((_, predicted_pos)) =
-                        history.history.iter().find(|(f, _)| *f == frame)
-                    {
-                        let dist = transform.translation.distance(predicted_pos.translation);
+                // if let Ok((mut transform)) = local_player.single_mut() {
+                //     // First: correct position if it drifted
 
-                        if dist > 0.1 {
-                            transform.translation =
-                                transform.translation.lerp(predicted_pos.translation, 0.5);
-                        }
+                //     // let dist = transform.translation.distance(server_position);
 
-                        transform.rotation = server_rotation;
-                        history.history.retain(|(f, _)| *f > frame);
-                    } else {
-                        // No prediction available — just snap to server position (you'll need to include it)
-                        transform.translation = server_position;
-                        transform.rotation = server_rotation;
-                        history.history.clear();
-                    }
-                }
+                //     // if dist > 0.1 {
+                //     //     transform.translation = transform.translation.lerp(server_position, 0.5);
+                //     // }
+
+                //     transform.translation = server_position;
+                //     transform.rotation = server_rotation;
+                //     history.history.retain(|(f, _)| *f > frame);
+                // }
             }
 
             ServerMessage::PlayerPosition {
@@ -212,20 +205,33 @@ fn receive_messages(
                 position,
                 rotation,
             } => {
-                if Some(client_id) == client_info.id {
-                    return;
-                }
+                // if Some(client_id) == client_info.id {
+                //     return;
+                // }
 
                 let mut found = false;
+
                 for (_ent, mut transform, remote) in remote_players.iter_mut() {
-                    if remote.client_id == client_id {
+                    if Some(client_id) == client_info.id {
+                        // This is us
                         transform.translation = position;
                         transform.rotation = rotation;
-                        found = true;
-                        break;
+                        info!(?position, "We're moving",);
+                        return;
+                    }
+
+                    match remote {
+                        Some(remote_player) => {
+                            if remote_player.client_id == client_id {
+                                transform.translation = position;
+                                transform.rotation = rotation;
+                                found = true;
+                                break;
+                            }
+                        }
+                        None => {}
                     }
                 }
-
                 if !found {
                     commands.spawn((
                         Transform::from_translation(position),
@@ -234,6 +240,7 @@ fn receive_messages(
                             custom_size: Some(Vec2::splat(30.0)),
                             ..default()
                         },
+                        Player,
                         RemotePlayer { client_id },
                     ));
                 }
