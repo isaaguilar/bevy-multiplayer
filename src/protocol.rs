@@ -26,17 +26,16 @@ pub enum ServerMessage {
     SpawnCollectibles(Vec<CollectibleInfo>),
 
     /// Removes collectible with given ID
-    DespawnCollectible { id: u64 },
-
-    /// Informs all clients of player movement
-    PlayerPosition {
-        client_id: u64,
-        position: Vec3,
-        rotation: Quat,
+    DespawnCollectible {
+        id: u64,
     },
 
+    PlayerPositions(Vec<PlayerPosition>),
+
     /// Informs this client what their assigned client ID is
-    AssignClientId { client_id: u64 },
+    AssignClientId {
+        client_id: u64,
+    },
 
     PlayerCorrection {
         client_id: u64,
@@ -46,6 +45,14 @@ pub enum ServerMessage {
         position: Vec3,
         rotation: Quat,
     },
+}
+
+/// Informs all clients of player movement
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PlayerPosition {
+    pub client_id: u64,
+    pub position: Vec3,
+    pub rotation: Quat,
 }
 
 /// Basic info for spawning collectibles client-side

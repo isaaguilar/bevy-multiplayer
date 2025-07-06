@@ -2,7 +2,8 @@
 use crate::dev_tools;
 use crate::{
     BoxCollectable, ClientMessage, CollectibleInfo, MAX_ACCELERATION, PROTOCOL_ID, ServerChannel,
-    ServerMessage, connection_config, protocol::SERVER_HOST,
+    ServerMessage, connection_config,
+    protocol::{PlayerPosition, SERVER_HOST},
 };
 use bevy::{color::palettes::css::YELLOW, platform::collections::HashMap, prelude::*};
 use bevy_rapier2d::{
@@ -47,6 +48,7 @@ pub fn run() {
         .insert_resource(PlayerEntityMap::default())
         .insert_resource(CollectibleEntityMap::default())
         .insert_resource(LastInputFrame::default())
+        .insert_resource(LastPlayerPosition::default())
         .add_systems(Startup, setup_world)
         .add_systems(
             Update,
@@ -279,14 +281,23 @@ fn broadcast_corrections(
 fn broadcast_player_positions(
     players: Query<(&Player, &Transform)>,
     mut server: ResMut<RenetServer>,
+    mut last_player_position: ResMut<LastPlayerPosition>,
 ) {
-    for (player, transform) in &players {
-        let msg = ServerMessage::PlayerPosition {
-            client_id: player.client_id,
-            position: transform.translation,
-            rotation: transform.rotation,
-        };
-        info!(position=?transform.translation);
+    if std::time::Instant::now()
+        .duration_since(last_player_position.time)
+        .gt(&std::time::Duration::from_millis(33))
+    {
+        last_player_position.time = std::time::Instant::now();
+        let player_positions = players
+            .iter()
+            .map(|(player, transform)| PlayerPosition {
+                client_id: player.client_id,
+                position: transform.translation,
+                rotation: transform.rotation,
+            })
+            .collect::<Vec<_>>();
+
+        let msg = ServerMessage::PlayerPositions(player_positions);
 
         let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         server.broadcast_message(ServerChannel::World, bytes);
@@ -324,6 +335,19 @@ impl Default for LastInputData {
             frame: Default::default(),
             direction: Default::default(),
             linvel: Default::default(),
+            time: std::time::Instant::now(),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub struct LastPlayerPosition {
+    pub time: std::time::Instant,
+}
+
+impl Default for LastPlayerPosition {
+    fn default() -> Self {
+        Self {
             time: std::time::Instant::now(),
         }
     }

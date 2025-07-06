@@ -200,49 +200,49 @@ fn receive_messages(
                 // }
             }
 
-            ServerMessage::PlayerPosition {
-                client_id,
-                position,
-                rotation,
-            } => {
+            ServerMessage::PlayerPositions(player_positions) => {
                 // if Some(client_id) == client_info.id {
                 //     return;
                 // }
 
-                let mut found = false;
+                for data in player_positions {
+                    let mut found = false;
 
-                for (_ent, mut transform, remote) in remote_players.iter_mut() {
-                    if Some(client_id) == client_info.id {
-                        // This is us
-                        transform.translation = position;
-                        transform.rotation = rotation;
-                        info!(?position, "We're moving",);
-                        return;
-                    }
-
-                    match remote {
-                        Some(remote_player) => {
-                            if remote_player.client_id == client_id {
-                                transform.translation = position;
-                                transform.rotation = rotation;
-                                found = true;
-                                break;
-                            }
+                    for (_ent, mut transform, remote) in remote_players.iter_mut() {
+                        if Some(data.client_id) == client_info.id {
+                            // This is us
+                            transform.translation = data.position;
+                            transform.rotation = data.rotation;
+                            found = true;
+                            break;
                         }
-                        None => {}
+
+                        match remote {
+                            Some(remote_player) => {
+                                if remote_player.client_id == data.client_id {
+                                    transform.translation = data.position;
+                                    transform.rotation = data.rotation;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            None => {}
+                        }
                     }
-                }
-                if !found {
-                    commands.spawn((
-                        Transform::from_translation(position),
-                        Sprite {
-                            color: Color::srgb(0.8, 0.2, 1.0),
-                            custom_size: Some(Vec2::splat(30.0)),
-                            ..default()
-                        },
-                        Player,
-                        RemotePlayer { client_id },
-                    ));
+                    if !found {
+                        commands.spawn((
+                            Transform::from_translation(data.position),
+                            Sprite {
+                                color: Color::srgb(0.8, 0.2, 1.0),
+                                custom_size: Some(Vec2::splat(30.0)),
+                                ..default()
+                            },
+                            Player,
+                            RemotePlayer {
+                                client_id: data.client_id,
+                            },
+                        ));
+                    }
                 }
             }
 
