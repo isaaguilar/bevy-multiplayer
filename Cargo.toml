@@ -12,6 +12,7 @@ renet2 = "0.10.0"
 serde = { version = "1.0.219", features = ["derive"] }
 renet2_netcode = "0.10.0"
 bevy_rapier2d = "0.30.0"
+rand = "0.9.1"
 
 [features]
 # Default to a native dev build.

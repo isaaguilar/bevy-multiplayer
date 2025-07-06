@@ -16,6 +16,7 @@ use bevy_renet2::{
     },
     prelude::{RenetServer, RenetServerPlugin, ServerEvent},
 };
+use rand::Rng;
 use renet2_netcode::NativeSocket;
 use std::{
     net::UdpSocket,
@@ -85,7 +86,7 @@ fn new_server() -> (RenetServer, NetcodeServerTransport) {
 fn setup_world(
     mut commands: Commands,
     mut config: Query<&mut RapierConfiguration>,
-    mut entity_map: ResMut<CollectibleEntityMap>,
+    mut collectible_entities: ResMut<CollectibleEntityMap>,
 ) {
     commands.spawn(Camera2d::default());
 
@@ -94,7 +95,7 @@ fn setup_world(
     }
 
     for i in 1..4 {
-        let id = i as u64;
+        let id = random_u64();
         let position = Vec3::new(i as f32 * 100.0, 0.0, 0.0);
 
         let entity = commands
@@ -110,7 +111,7 @@ fn setup_world(
             ))
             .id();
 
-        entity_map.0.insert(id, entity);
+        collectible_entities.0.insert(id, entity);
     }
 }
 
@@ -241,6 +242,42 @@ fn receive_from_clients(
                             bincode::serde::encode_to_vec(&msg, bincode::config::standard())
                                 .unwrap();
                         server.broadcast_message(ServerChannel::World, bytes);
+
+                        // Spawn a new collectable now
+                        let mut rng = rand::rng();
+
+                        let id = random_u64();
+                        let position = Vec3::new(
+                            rng.random_range(-600.0..=600.0),
+                            rng.random_range(-300.0..=300.0),
+                            0.0,
+                        );
+
+                        let entity = commands
+                            .spawn((
+                                BoxCollectable,
+                                CollectibleId(id),
+                                Transform::from_translation(position),
+                                Sprite {
+                                    color: YELLOW.into(),
+                                    custom_size: Some(Vec2::splat(20.0)),
+                                    ..default()
+                                },
+                            ))
+                            .id();
+
+                        collectible_entities.0.insert(id, entity);
+
+                        let snapshot: Vec<CollectibleInfo> = vec![CollectibleInfo {
+                            id: id,
+                            position: position,
+                        }];
+
+                        let msg = ServerMessage::SpawnCollectibles(snapshot);
+                        let bytes =
+                            bincode::serde::encode_to_vec(&msg, bincode::config::standard())
+                                .unwrap();
+                        server.broadcast_message(ServerChannel::World, bytes);
                     }
                 }
             }
@@ -300,4 +337,16 @@ impl Default for LastPlayerPosition {
             time: std::time::Instant::now(),
         }
     }
+}
+
+// ===== Utils ======
+fn random_u64() -> u64 {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+    let seed = now.as_secs() ^ now.subsec_nanos() as u64;
+
+    const A: u64 = u64::MAX;
+    const C: u64 = u64::MIN;
+
+    A.wrapping_mul(seed).wrapping_add(C)
 }
