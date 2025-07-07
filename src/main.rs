@@ -3,24 +3,19 @@ use std::time::Duration;
 use bevy::ecs::component::Component;
 use renet2::{ChannelConfig, ConnectionConfig, SendType};
 
-mod client;
-#[cfg(feature = "dev")]
-mod dev_tools;
 mod protocol;
 mod server;
 
 use protocol::*;
 
 const MAX_ACCELERATION: f32 = 1000.0;
-// const MAX_VELOCITY: f32 = 200.0;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(|s| s.as_str()) {
         Some("server") => server::run(),
-        Some("client") => client::run(),
         _ => {
-            eprintln!("Usage: cargo run --bin main -- [server|client]");
+            eprintln!("Usage: cargo run --bin main -- [server]");
         }
     }
 }

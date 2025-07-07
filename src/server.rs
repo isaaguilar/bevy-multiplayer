@@ -1,5 +1,3 @@
-#[cfg(feature = "dev")]
-use crate::dev_tools;
 use crate::{
     BoxCollectable, ClientMessage, CollectibleInfo, MAX_ACCELERATION, PROTOCOL_ID, ServerChannel,
     ServerMessage, connection_config,
@@ -28,18 +26,8 @@ pub fn run() {
     let (server, transport) = new_server();
 
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                visible: false,
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(MinimalPlugins) 
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
-        .add_plugins(
-            #[cfg(feature = "dev")]
-            dev_tools::plugin,
-        )
         .add_plugins(NetcodeServerPlugin)
         .add_plugins(RenetServerPlugin)
         .insert_resource(server)
@@ -53,7 +41,6 @@ pub fn run() {
             (
                 handle_client_connects,
                 receive_from_clients,
-                print_server_events,
             ),
         )
         .add_systems(
@@ -187,19 +174,12 @@ fn handle_client_connects(
                         bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
 
                     server.broadcast_message(ServerChannel::World, bytes);
-                    info!("Despawned disconnected player {client_id} ({reason:?})");
                 }
             }
         }
     }
 }
 
-// === Print Events (Optional) ===
-fn print_server_events(mut events: EventReader<ServerEvent>) {
-    for event in events.read() {
-        info!("Server Event: {:?}", event);
-    }
-}
 
 // === Main Receive Logic ===
 fn receive_from_clients(
@@ -221,7 +201,7 @@ fn receive_from_clients(
             match msg {
                 ClientMessage::MoveInput {
                     direction,
-                    frame: _frame, //unused
+                    frame: _frame, 
                     delta,
                 } => {
                     if let Some(entity) = player_map.0.get(&client_id) {

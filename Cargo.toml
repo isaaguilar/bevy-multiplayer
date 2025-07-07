@@ -5,7 +5,7 @@ edition = "2024"
 
 
 [dependencies]
-bevy = "0.16.1"
+bevy = { version = "0.16.1", default-features=false, features = [] }
 bevy_renet2 = "0.10.0"
 bincode = { version = "2.0.1", features = ["serde"] }
 renet2 = "0.10.0"
@@ -14,13 +14,3 @@ renet2_netcode = "0.10.0"
 bevy_rapier2d = "0.30.0"
 rand = "0.9.1"
 
-[features]
-# Default to a native dev build.
-default = ["dev_native"]
-dev = [
-    "bevy/dynamic_linking",
-    "bevy/bevy_dev_tools",
-    "bevy/bevy_ui_debug",
-    "bevy/track_location",
-]
-dev_native = ["dev", "bevy/file_watcher", "bevy/embedded_watcher"]
